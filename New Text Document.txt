@@ -1,0 +1,98 @@
+import streamlit as st
+import joblib
+import re
+import string
+import numpy as np
+import time
+import os
+
+# ============================================================
+# PAGE CONFIGURATION
+# ============================================================
+st.set_page_config(
+    page_title="Gaming Chat Toxicity Detector",
+    page_icon="🎮",
+    layout="centered"
+)
+
+# ============================================================
+# LOAD MODELS (WITH ERROR CHECKING)
+# ============================================================
+@st.cache_resource
+def load_models():
+    # Check if files exist before loading
+    files = ['random_forest_model.pkl', 'tfidf_vectorizer.pkl', 'label_encoder.pkl']
+    for f in files:
+        if not os.path.exists(f):
+            st.error(f"Missing file: {f}. Please run your Jupyter Notebook first to save models.")
+            st.stop()
+            
+    rf_model = joblib.load('random_forest_model.pkl')
+    vectorizer = joblib.load('tfidf_vectorizer.pkl')
+    label_encoder = joblib.load('label_encoder.pkl')
+    return rf_model, vectorizer, label_encoder
+
+rf_model, vectorizer, label_encoder = load_models()
+
+# ============================================================
+# TEXT CLEANING (MUST MATCH TRAINING LOGIC)
+# ============================================================
+def clean_text(text):
+    text = str(text).lower()
+    text = re.sub(r'<.*?>', '', text) # Remove HTML
+    text = re.sub(r'http\S+', '', text) # Remove URLs
+    text = text.translate(str.maketrans('', '', string.punctuation))
+    text = re.sub(r'\d+', '', text) # Remove numbers
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
+# ============================================================
+# COLOR MAP
+# ============================================================
+color_map = {
+    "clean": "🟢",
+    "mild": "🟡",
+    "moderate": "🟠",
+    "severe": "🔴",
+    "extreme": "⚫"
+}
+
+st.title("🎮 Gaming Chat Toxicity Detector")
+st.write("AI-powered multi-level toxicity detection system for gamer safety.")
+
+user_input = st.text_area("Enter chat message here:", placeholder="Type something...")
+
+if st.button("Analyze Message"):
+    if user_input.strip() == "":
+        st.warning("Please enter a message.")
+    else:
+        with st.spinner("Classifying..."):
+            # 1. Clean
+            cleaned = clean_text(user_input)
+            
+            # 2. Vectorize
+            vec = vectorizer.transform([cleaned])
+            
+            # 3. Predict & Confidence
+            pred = rf_model.predict(vec)[0]
+            probs = rf_model.predict_proba(vec)[0]
+            confidence = np.max(probs)
+            
+            # 4. Decode Label
+            predicted_label = label_encoder.inverse_transform([pred])[0]
+
+        # Display Results
+        icon = color_map.get(predicted_label, "⚪")
+        st.markdown(f"## {icon} Prediction: **{predicted_label.upper()}**")
+        st.markdown(f"**Confidence Score:** `{confidence*100:.2f}%`")
+        st.progress(float(confidence))
+
+        # Contextual Feedback
+        if predicted_label == "clean":
+            st.success("Safe! This message follows community guidelines.")
+        elif predicted_label == "mild":
+            st.info("Mildly toxic. Might need a warning.")
+        elif predicted_label in ["moderate", "severe"]:
+            st.warning("Offensive content detected. Moderation recommended.")
+        else:
+            st.error("Extreme toxicity detected! Immediate action required.")
